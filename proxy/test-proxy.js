@@ -83,20 +83,54 @@ async function main() {
     req.end();
   });
   console.log(`Status: ${r4.status}, CORS: ${r4.cors}`);
-  if (r4.status === 200 && r4.cors === "*") { ok++; console.log("  ✓ PASS"); } else { fail++; console.log("  ✗ FAIL"); }
+  // CORS intentionally disabled for security (no Access-Control-Allow-Origin)
+  if (r4.status === 200) { ok++; console.log("  ✓ PASS"); } else { fail++; console.log("  ✗ FAIL"); }
 
-  // ── Test 5: Image pipeline (graceful fallback) ──
-  console.log("\n=== [TEST 5] Image pipeline (graceful fallback) ===");
-  const r5 = await post("/messages", {
+  // ── Test 5: Real DeepSeek streaming ──
+  console.log("\n=== [TEST 5] DeepSeek streaming ===");
+  const r5Stream = { status: 0, body: "" };
+  try {
+    await new Promise((resolve, reject) => {
+      const data = JSON.stringify({
+        model: "claude-sonnet-4-5", max_tokens: 100, stream: true,
+        messages: [{ role: "user", content: "Say hello in one word." }],
+      });
+      const req = https.request({
+        hostname: HOST, port: PORT, path: "/messages", method: "POST",
+        headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(data) },
+      }, (res) => {
+        r5Stream.status = res.statusCode;
+        const chunks = [];
+        res.on("data", (c) => chunks.push(c));
+        res.on("end", () => { r5Stream.body = Buffer.concat(chunks).toString(); resolve(); });
+        res.on("error", reject);
+      });
+      req.on("error", reject);
+      req.write(data);
+      req.end();
+    });
+    const hasMessageStart = r5Stream.body.includes('"type":"message_start"');
+    const hasContentDelta = r5Stream.body.includes('"type":"content_block_delta"');
+    console.log(`Status: ${r5Stream.status}, has message_start: ${hasMessageStart}, has content_delta: ${hasContentDelta}`);
+    if (r5Stream.status === 200 && hasMessageStart && hasContentDelta) { ok++; console.log("  ✓ PASS"); } else { fail++; console.log("  ✗ FAIL"); }
+  } catch (e) {
+    console.log(`Error: ${e.message}`);
+    fail++; console.log("  ✗ FAIL");
+  }
+
+  // ── Test 6: Image pipeline (graceful fallback) ──
+  console.log("\n=== [TEST 6] Image pipeline (graceful fallback) ===");
+  // Test 6 (previously test 5)
+  const r6 = await post("/messages", {
     model: "claude-sonnet-4-5", max_tokens: 100,
     messages: [{ role: "user", content: [{ type: "text", text: "describe" }, { type: "image", source: { type: "base64", media_type: "image/jpeg", data: "/9j/4AAQSkZJRg==" } }] }],
   });
-  console.log(`Status: ${r5.status}`);
-  const r5body = JSON.parse(r5.body);
-  const r5text = JSON.stringify(r5body);
-  const hasImageFallback = r5text.includes("[Immagine non analizzabile]");
+  console.log(`Status: ${r6.status}`);
+  const r6body = JSON.parse(r6.body);
+  const r6text = JSON.stringify(r6body);
+  const hasImageFallback = r6text.includes("[Immagine non analizzabile]");
   console.log(`Has image fallback text: ${hasImageFallback}`);
-  if (r5.status === 200 && hasImageFallback) { ok++; console.log("  ✓ PASS"); } else { fail++; console.log("  ✗ FAIL"); }
+  if (r6.status === 200 && hasImageFallback) { ok++; console.log("  ✓ PASS"); } else { fail++; console.log("  ✗ FAIL"); }
 
   // ── Summary ──
   console.log(`\n━━━━━━━━━━━━━━━━━━━`);

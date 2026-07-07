@@ -58,10 +58,16 @@ const ENDPOINTS = {
 };
 // ─────────────────────────────────────────────────────────
 
-// Load TLS certs
+// Load TLS certs with full chain (server + CA) so clients can verify without system trust store
 const tlsOptions = {
   key: fs.readFileSync(path.join(DIR, "certs", "server-key.pem"), "utf8"),
-  cert: fs.readFileSync(path.join(DIR, "certs", "server-cert.pem"), "utf8"),
+  cert: fs.readFileSync(path.join(DIR, "certs", "server-fullchain.pem"), "utf8"),
+  // Prevent session ticket reuse issues between connections
+  sessionTimeout: 0,
+  // Explicit minimum TLS version
+  minVersion: "TLSv1.2",
+  // Honor client cipher preferences
+  honorCipherOrder: true,
 };
 
 // ── Helpers ──────────────────────────────────────────────
@@ -490,6 +496,12 @@ function handleImagePipeline(req, res, parsed, origModel) {
       console.log(`[proxy] [IMAGE] forwarding to DeepSeek (${newBody.length} bytes, stream=${!!parsed.stream})`);
 
       const dsReq = https.request(dsOpts, (dsRes) => {
+        dsRes.on("error", (e) => {
+          console.error("[proxy] [IMAGE] deepseek response error:", e.message);
+          if (!res.headersSent) res.writeHead(502, { "Content-Type": "application/json" });
+          try { res.end(JSON.stringify({ type: "error", error: { message: e.message } })); } catch {}
+        });
+
         const isSSE = (dsRes.headers["content-type"] || "").includes("text/event-stream");
         res.writeHead(dsRes.statusCode, {
           "Content-Type": dsRes.headers["content-type"] || "application/json",
@@ -511,7 +523,7 @@ function handleImagePipeline(req, res, parsed, origModel) {
                   if (ev.type === "message_start" && ev.message?.model) ev.message.model = origModel;
                   res.write("data: " + JSON.stringify(ev) + "\n\n");
                 } catch { res.write(line + "\n"); }
-              } else { res.write(line + "\n"); }
+              } else if (line) { res.write(line + "\n"); }
             }
           });
           dsRes.on("end", () => { if (buf) res.write(buf + "\n"); res.end(); console.log("[proxy] [IMAGE] DeepSeek stream complete"); });
@@ -556,6 +568,9 @@ function handleRequest(req, res) {
   // res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   // res.setHeader("Access-Control-Allow-Headers", "*");
 
+  // ── Catch-all request log ──────────────────────────
+  console.log(`[proxy] >>> ${req.method} ${req.url} (headers: content-type=${req.headers["content-type"] || "none"}, content-length=${req.headers["content-length"] || "none"}, anthropic-version=${req.headers["anthropic-version"] || "none"})`);
+
   if (req.method === "OPTIONS") {
     res.writeHead(200);
     return res.end();
@@ -599,9 +614,14 @@ function handleRequest(req, res) {
   }
 
   let body = "";
+  let bodyChunks = 0;
   // Security: Limit request payload size to 50 MB to mitigate DoS attacks
   req.on("data", (chunk) => {
     body += chunk;
+    bodyChunks++;
+    if (bodyChunks === 1 || body.length > 50 * 1024 * 1024) {
+      console.log(`[proxy] >>> body: chunk #${bodyChunks}, size=${chunk.length}, total=${body.length}`);
+    }
     if (body.length > 50 * 1024 * 1024) { // 50MB limit
       if (!res.headersSent) {
         res.writeHead(413, { "Content-Type": "application/json" });
@@ -611,6 +631,7 @@ function handleRequest(req, res) {
     }
   });
   req.on("end", () => {
+    console.log(`[proxy] >>> body: end (${bodyChunks} chunks, ${body.length} bytes total)`);
     if (req.destroyed) return;
 
     let parsed;
@@ -629,7 +650,25 @@ function handleRequest(req, res) {
     const origMaxTokens = parsed.max_tokens;
     const { key: epKey, ep, upstreamModel } = resolveEndpoint(parsed);
 
-    console.log(`[proxy] incoming: model=${origModel}, max_tokens=${origMaxTokens}, stream=${!!parsed.stream}, endpoint=${epKey}`);
+    // ── Detailed request log ──────────────────────────
+    const sysType = typeof parsed.system;
+    const sysInfo = parsed.system
+      ? (sysType === "string" ? `string(${parsed.system.length}c)` : `array[${parsed.system.length}]`)
+      : "none";
+    const thinkingInfo = parsed.thinking ? parsed.thinking.type || JSON.stringify(parsed.thinking).substring(0, 40) : "none";
+    const msgCount = (parsed.messages || []).length;
+    const toolCount = (parsed.tools || []).length;
+    console.log(`[proxy] ┌─ REQUEST`);
+    console.log(`[proxy] │  model:       ${origModel}`);
+    console.log(`[proxy] │  max_tokens:  ${origMaxTokens}`);
+    console.log(`[proxy] │  stream:      ${!!parsed.stream}`);
+    console.log(`[proxy] │  system:      ${sysInfo}`);
+    console.log(`[proxy] │  thinking:    ${thinkingInfo}`);
+    console.log(`[proxy] │  messages:    ${msgCount}`);
+    console.log(`[proxy] │  tools:       ${toolCount}`);
+    console.log(`[proxy] │  endpoint:    ${epKey} (${ep.label})`);
+    console.log(`[proxy] │  upstreamModel: ${upstreamModel}`);
+    console.log(`[proxy] └─ END REQUEST`);
 
     // ── INTERCEPT PROBES ──────────────────────────────
     if (origMaxTokens !== undefined && origMaxTokens <= 1 && !parsed.stream) {
@@ -674,6 +713,15 @@ function handleRequest(req, res) {
       console.log(`[proxy] → POST https://${ep.host}${upstreamPath} (${newBody.length} bytes, stream=${!!parsed.stream})`);
 
       const upstream = https.request(options, (upstreamRes) => {
+        console.log(`[proxy] ← upstream status: ${upstreamRes.statusCode}, content-type: ${upstreamRes.headers["content-type"] || "none"}`);
+
+        // Handle upstream response stream errors (connection reset, timeout, etc.)
+        upstreamRes.on("error", (err) => {
+          console.error("[proxy] upstream response error:", err.message);
+          if (!res.headersSent) res.writeHead(502, { "Content-Type": "application/json" });
+          try { res.end(JSON.stringify({ type: "error", error: { message: err.message } })); } catch {}
+        });
+
         const isSSE = (upstreamRes.headers["content-type"] || "").includes("text/event-stream");
         const respHeaders = {
           "Content-Type": upstreamRes.headers["content-type"] || "application/json",
@@ -682,6 +730,8 @@ function handleRequest(req, res) {
 
         if (isSSE) {
           let buffer = "";
+          let eventCount = 0;
+          let firstEventType = "";
           upstreamRes.on("data", (chunk) => {
             buffer += chunk.toString();
             const lines = buffer.split("\n");
@@ -693,12 +743,18 @@ function handleRequest(req, res) {
                 try {
                   const event = JSON.parse(data);
                   if (event.type === "message_start" && event.message?.model) event.message.model = origModel;
+                  eventCount++;
+                  if (!firstEventType) firstEventType = event.type;
                   res.write("data: " + JSON.stringify(event) + "\n\n");
                 } catch { res.write(line + "\n"); }
-              } else { res.write(line + "\n"); }
+              } else if (line) { res.write(line + "\n"); }
             }
           });
-          upstreamRes.on("end", () => { if (buffer) res.write(buffer + "\n"); res.end(); console.log("[proxy] ← stream complete"); });
+          upstreamRes.on("end", () => {
+            if (buffer) res.write(buffer + "\n");
+            res.end();
+            console.log(`[proxy] ← SSE stream complete: ${eventCount} events, first=${firstEventType}`);
+          });
         } else {
           let d = "";
           upstreamRes.on("data", (c) => (d += c));
@@ -749,6 +805,13 @@ function handleRequest(req, res) {
       console.log(`[proxy] [OPENCODE] → POST https://${ep.host}${upstreamPath} (${newBody.length} bytes, stream=${!!parsed.stream})`);
 
       const upstream = https.request(options, (upstreamRes) => {
+        // Handle upstream response stream errors
+        upstreamRes.on("error", (err) => {
+          console.error("[proxy] [OPENCODE] upstream response error:", err.message);
+          if (!res.headersSent) res.writeHead(502, { "Content-Type": "application/json" });
+          try { res.end(JSON.stringify({ type: "error", error: { message: err.message } })); } catch {}
+        });
+
         const isSSE = (upstreamRes.headers["content-type"] || "").includes("text/event-stream");
 
         if (upstreamRes.statusCode >= 400) {
@@ -796,7 +859,7 @@ function handleRequest(req, res) {
                     res.write("data: " + JSON.stringify(events) + "\n\n");
                   }
                 } catch { res.write(line + "\n"); }
-              } else { res.write(line + "\n"); }
+              } else if (line) { res.write(line + "\n"); }
             }
           });
 
@@ -840,6 +903,15 @@ function handleRequest(req, res) {
     if (ep.type === "gemini") {
       handleImagePipeline(req, res, parsed, origModel);
       return;
+    }
+  });
+
+  // Handle client disconnect / stream error
+  req.on("error", (err) => {
+    console.error("[proxy] client error:", err.message);
+    if (!res.headersSent) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ type: "error", error: { message: "Client error" } }));
     }
   });
 }
@@ -913,6 +985,25 @@ function geminiToAnthropicSSE(geminiChunk, origModel, state) {
 // ── Startup ───────────────────────────────────────────────
 function startServer() {
   const server = https.createServer(tlsOptions, handleRequest);
+
+  // ── TLS / connection-level error logging ────────────
+  server.on("tlsClientError", (err, tlsSocket) => {
+    console.error(`[proxy] ⚠ TLS CLIENT ERROR: ${err.message} (code: ${err.code || "none"}, remote: ${tlsSocket.remoteAddress}:${tlsSocket.remotePort})`);
+    tlsSocket.destroy();
+  });
+  server.on("clientError", (err, socket) => {
+    console.error(`[proxy] ⚠ HTTP CLIENT ERROR: ${err.message} (code: ${err.code || "none"})`);
+    // Don't attempt to write to the socket — just destroy it silently.
+    // Writing HTTP/1.1 400 to an already-reset socket can corrupt connection state.
+    socket.destroy();
+  });
+  server.on("error", (err) => {
+    console.error(`[proxy] ⚠ SERVER ERROR: ${err.message}`);
+  });
+  server.on("secureConnection", (tlsSocket) => {
+    console.log(`[proxy] TLS connection from ${tlsSocket.remoteAddress}:${tlsSocket.remotePort} (ALPN: ${tlsSocket.alpnProtocol || "none"})`);
+  });
+
   // Security: Bind server to localhost only to prevent external access
 server.listen(PROXY_PORT, "127.0.0.1", () => {
     console.log(`\n  Claude → Multi-Backend Proxy (HTTPS)`);
