@@ -126,6 +126,14 @@ if "!GEMINI_KEY!"=="" (
     exit /b 1
 )
 
+echo.
+echo   Z.AI GLM-5.2 is optional (enables the claude-opus-4-8 model^).
+echo   -^> Get your API key at: https://z.ai
+echo.
+
+set "ZAI_KEY="
+set /p "ZAI_KEY=  Z.AI API key (Enter to skip): "
+
 :: Write .env based on provider choice
 if "!LLM_PROVIDER!"=="2" (
     (
@@ -137,6 +145,9 @@ echo OPENCODE_API_KEY=!OPENCODE_KEY!
 echo.
 echo # Google Gemini API Key (https://aistudio.google.com/apikey -- free tier^)
 echo GEMINI_API_KEY=!GEMINI_KEY!
+echo.
+echo # Z.AI API Key (https://z.ai -- optional, GLM-5.2 via claude-opus-4-8^)
+echo ZAI_API_KEY=!ZAI_KEY!
     ) > "%ENV_FILE%"
 ) else (
     (
@@ -148,6 +159,9 @@ echo DEEPSEEK_API_KEY=!DEEPSEEK_KEY!
 echo.
 echo # Google Gemini API Key (https://aistudio.google.com/apikey -- free tier^)
 echo GEMINI_API_KEY=!GEMINI_KEY!
+echo.
+echo # Z.AI API Key (https://z.ai -- optional, GLM-5.2 via claude-opus-4-8^)
+echo ZAI_API_KEY=!ZAI_KEY!
     ) > "%ENV_FILE%"
 )
 

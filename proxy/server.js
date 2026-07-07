@@ -55,6 +55,17 @@ const ENDPOINTS = {
     defaultModel: "deepseek-v4-flash",
     type: "opencode",
   },
+  zai: {
+    label: "Z.AI GLM-5.2",
+    host: "api.z.ai",
+    basePath: "/api/anthropic",
+    apiKey: process.env.ZAI_API_KEY || null,
+    modelMap: {
+      "claude-opus-4-8": "glm-5.2",
+    },
+    defaultModel: "glm-5.2",
+    type: "anthropic",
+  },
 };
 // ─────────────────────────────────────────────────────────
 
@@ -84,12 +95,13 @@ function resolveEndpoint(parsed) {
     }
   }
 
-  // Prefer opencode over deepseek when API key is configured
-  const endpointOrder = ["opencode", "deepseek", "gemini"];
+  // Preference order: opencode → zai (GLM-5.2 via claude-opus-4-8) → deepseek → gemini.
+  // Each entry only matches its own modelMap slugs, so order does not cause conflicts.
+  const endpointOrder = ["opencode", "zai", "deepseek", "gemini"];
   for (const key of endpointOrder) {
     const ep = ENDPOINTS[key];
     if (!ep) continue;
-    if (key === "opencode" && !ep.apiKey) continue;
+    if (!ep.apiKey) continue; // skip endpoints without a configured API key
     if (ep.modelMap && ep.modelMap[origModel]) return { key, ep, upstreamModel: ep.modelMap[origModel] };
   }
   return { key: "deepseek", ep: ENDPOINTS.deepseek, upstreamModel: ENDPOINTS.deepseek.defaultModel };
@@ -407,9 +419,8 @@ function geminiToAnthropicResponse(geminiResp, origModel) {
 // ── Image pipeline ─────────────────────────────────────────
 function handleImagePipeline(req, res, parsed, origModel) {
   const geminiEp = ENDPOINTS.gemini;
-  const deepseekEp = ENDPOINTS.deepseek;
 
-  console.log(`[proxy] [IMAGE] === Image → Gemini OCR → DeepSeek pipeline ===`);
+  console.log(`[proxy] [IMAGE] === Image → Gemini OCR → text backend pipeline ===`);
 
   const geminiBody = anthropicToGeminiContents(parsed, origModel);
   const geminiBodyStr = JSON.stringify(geminiBody);
@@ -437,9 +448,6 @@ function handleImagePipeline(req, res, parsed, origModel) {
       } else {
         console.log(`[proxy] [IMAGE] description (${imageDescription.length} chars): ${imageDescription.substring(0, 200)}...`);
       }
-
-      const dsModel = deepseekEp.modelMap[origModel] || deepseekEp.defaultModel;
-      parsed.model = dsModel;
 
       if (!parsed.max_tokens || parsed.max_tokens < 1024) parsed.max_tokens = 8192;
 
@@ -479,25 +487,32 @@ function handleImagePipeline(req, res, parsed, origModel) {
         }
       }
 
-      console.log(`[proxy] [IMAGE] model map: ${origModel} → ${dsModel}`);
+      // Re-resolve the text backend now that images are stripped, so
+      // claude-opus-4-8 routes to Z.AI GLM-5.2 instead of falling back to DeepSeek.
+      const { ep: textEp, upstreamModel: textModel } = resolveEndpoint(parsed);
+      const fwdEp = textEp.type === "anthropic" ? textEp : ENDPOINTS.deepseek;
+      const dsModel = textEp.type === "anthropic" ? textModel : (fwdEp.modelMap[origModel] || fwdEp.defaultModel);
+      parsed.model = dsModel;
+
+      console.log(`[proxy] [IMAGE] model map: ${origModel} → ${dsModel} (via ${fwdEp.label})`);
 
       const newBody = JSON.stringify(parsed);
-      const dsPath = deepseekEp.basePath + req.url.split("?")[0];
+      const dsPath = fwdEp.basePath + req.url.split("?")[0];
       const dsOpts = {
-        hostname: deepseekEp.host, port: 443, path: dsPath, method: "POST",
+        hostname: fwdEp.host, port: 443, path: dsPath, method: "POST",
         headers: {
           "Content-Type": "application/json",
           "Content-Length": Buffer.byteLength(newBody),
-          "x-api-key": deepseekEp.apiKey || "",
+          "x-api-key": fwdEp.apiKey || "",
           "anthropic-version": req.headers["anthropic-version"] || "2023-06-01",
         },
       };
 
-      console.log(`[proxy] [IMAGE] forwarding to DeepSeek (${newBody.length} bytes, stream=${!!parsed.stream})`);
+      console.log(`[proxy] [IMAGE] forwarding to ${fwdEp.label} (${newBody.length} bytes, stream=${!!parsed.stream})`);
 
       const dsReq = https.request(dsOpts, (dsRes) => {
         dsRes.on("error", (e) => {
-          console.error("[proxy] [IMAGE] deepseek response error:", e.message);
+          console.error(`[proxy] [IMAGE] ${fwdEp.label} response error:`, e.message);
           if (!res.headersSent) res.writeHead(502, { "Content-Type": "application/json" });
           try { res.end(JSON.stringify({ type: "error", error: { message: e.message } })); } catch {}
         });
@@ -526,12 +541,12 @@ function handleImagePipeline(req, res, parsed, origModel) {
               } else if (line) { res.write(line + "\n"); }
             }
           });
-          dsRes.on("end", () => { if (buf) res.write(buf + "\n"); res.end(); console.log("[proxy] [IMAGE] DeepSeek stream complete"); });
+          dsRes.on("end", () => { if (buf) res.write(buf + "\n"); res.end(); console.log(`[proxy] [IMAGE] ${fwdEp.label} stream complete`); });
         } else {
           let dd = "";
           dsRes.on("data", (c) => (dd += c));
           dsRes.on("end", () => {
-            console.log(`[proxy] [IMAGE] DeepSeek response: ${dsRes.statusCode} (${dd.length} bytes)`);
+            console.log(`[proxy] [IMAGE] ${fwdEp.label} response: ${dsRes.statusCode} (${dd.length} bytes)`);
             try {
               const r = JSON.parse(dd);
               r.model = origModel;
@@ -542,7 +557,7 @@ function handleImagePipeline(req, res, parsed, origModel) {
       });
 
       dsReq.on("error", (e) => {
-        console.error("[proxy] [IMAGE] deepseek error:", e.message);
+        console.error(`[proxy] [IMAGE] ${fwdEp.label} error:`, e.message);
         if (!res.headersSent) res.writeHead(502, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ type: "error", error: { message: e.message } }));
       });
@@ -608,7 +623,7 @@ function handleRequest(req, res) {
     return res.end(JSON.stringify({
       status: "ok",
       proxy: "claude-deepseek-proxy",
-      endpoints: "DeepSeek + Gemini Flash (auto image routing) + OpenCode Go",
+      endpoints: "DeepSeek + Z.AI GLM-5.2 + Gemini Flash (auto image routing) + OpenCode Go",
       models,
     }));
   }

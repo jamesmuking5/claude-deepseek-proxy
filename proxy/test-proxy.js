@@ -132,6 +132,44 @@ async function main() {
   console.log(`Has image fallback text: ${hasImageFallback}`);
   if (r6.status === 200 && hasImageFallback) { ok++; console.log("  ✓ PASS"); } else { fail++; console.log("  ✗ FAIL"); }
 
+  // ── Test 7: Real Z.AI GLM-5.2 streaming ──
+  console.log("\n=== [TEST 7] Z.AI GLM-5.2 streaming ===");
+  const r7Stream = { status: 0, body: "" };
+  try {
+    await new Promise((resolve, reject) => {
+      const data = JSON.stringify({
+        model: "claude-opus-4-8", max_tokens: 100, stream: true,
+        messages: [{ role: "user", content: "Say hello in one word." }],
+      });
+      const req = https.request({
+        hostname: HOST, port: PORT, path: "/messages", method: "POST",
+        headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(data) },
+      }, (res) => {
+        r7Stream.status = res.statusCode;
+        const chunks = [];
+        res.on("data", (c) => chunks.push(c));
+        res.on("end", () => { r7Stream.body = Buffer.concat(chunks).toString(); resolve(); });
+        res.on("error", reject);
+      });
+      req.on("error", reject);
+      req.write(data);
+      req.end();
+    });
+    const hasMessageStart = r7Stream.body.includes('"type":"message_start"');
+    const hasContentDelta = r7Stream.body.includes('"type":"content_block_delta"');
+    const hasError = r7Stream.body.includes('"type":"error"');
+    if (hasError) {
+      console.log(`Body: ${r7Stream.body.substring(0, 200)}`);
+      console.log("  ⚠ SKIPPED (Z.AI not configured — set ZAI_API_KEY in .env)");
+    } else {
+      console.log(`Status: ${r7Stream.status}, has message_start: ${hasMessageStart}, has content_delta: ${hasContentDelta}`);
+      if (r7Stream.status === 200 && hasMessageStart && hasContentDelta) { ok++; console.log("  ✓ PASS"); } else { fail++; console.log("  ✗ FAIL"); }
+    }
+  } catch (e) {
+    console.log(`Error: ${e.message}`);
+    fail++; console.log("  ✗ FAIL");
+  }
+
   // ── Summary ──
   console.log(`\n━━━━━━━━━━━━━━━━━━━`);
   console.log(`  ${ok} passed, ${fail} failed`);
