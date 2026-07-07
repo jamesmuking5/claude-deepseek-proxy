@@ -108,6 +108,18 @@ $san.AddIpAddress([System.Net.IPAddress]::Parse("127.0.0.1"))
 $san.AddIpAddress([System.Net.IPAddress]::Parse("172.16.10.1"))
 $srvReq.CertificateExtensions.Add($san.Build())
 
+# Subject Key Identifier (required by strict TLS libraries like BoringSSL)
+$srvReq.CertificateExtensions.Add(
+    [System.Security.Cryptography.X509Certificates.X509SubjectKeyIdentifierExtension]::new($srvReq.PublicKey, $false)
+)
+
+# Authority Key Identifier — links server cert to CA cert
+# THIS IS THE CRITICAL FIX: without AKI, BoringSSL/Chromium rejects the cert
+# with CERT_SIGNATURE_FAILURE, causing Claude Desktop connections to fail
+$srvReq.CertificateExtensions.Add(
+    [System.Security.Cryptography.X509Certificates.X509AuthorityKeyIdentifierExtension]::new($caCert, $false)
+)
+
 $rng    = [System.Security.Cryptography.RandomNumberGenerator]::Create()
 $serial = [byte[]]::new(16)
 $rng.GetBytes($serial)
@@ -128,9 +140,15 @@ $srvKeyB64 = [Convert]::ToBase64String($srvKeyDer, [Base64FormattingOptions]::In
 Export-CertPem $caCert   | Set-Content -Encoding utf8 "$DIR\ca-cert.pem"
 Export-CertPem $srvCert  | Set-Content -Encoding utf8 "$DIR\server-cert.pem"
 
+# Build full chain (server + CA) so the server can send the complete chain to clients
+$serverPem = Get-Content "$DIR\server-cert.pem" -Raw
+$caPem     = Get-Content "$DIR\ca-cert.pem" -Raw
+[System.IO.File]::WriteAllText("$DIR\server-fullchain.pem", $serverPem + $caPem, [System.Text.Encoding]::ASCII)
+
 Write-Host ""
-Write-Host "Certificati generati:"
-Write-Host "  ca-cert.pem      - Certificato CA (da installare nel sistema)"
-Write-Host "  ca-key.pem       - Chiave CA (tenere segreto)"
-Write-Host "  server-cert.pem  - Certificato server"
-Write-Host "  server-key.pem   - Chiave server"
+Write-Host "Certificati generati (con AKI):"
+Write-Host "  ca-cert.pem          - Certificato CA (da installare nel sistema)"
+Write-Host "  ca-key.pem           - Chiave CA (tenere segreto)"
+Write-Host "  server-cert.pem      - Certificato server (con AKI)"
+Write-Host "  server-key.pem       - Chiave server"
+Write-Host "  server-fullchain.pem - Catena completa (server + CA)"

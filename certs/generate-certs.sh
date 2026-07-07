@@ -22,13 +22,17 @@ openssl x509 -req -days 3650 \
   -out server-cert.pem \
   -extensions v3_ext -extfile server.cnf
 
+# Build full chain (server + CA) for servers that need to send the complete chain
+cat server-cert.pem ca-cert.pem > server-fullchain.pem
+
 rm -f server.csr ca-cert.srl
 
 echo ""
-echo "Certificati generati:"
-echo "  ca-cert.pem      - Certificato CA (da installare nel sistema)"
-echo "  ca-key.pem       - Chiave CA (tenere segreto)"
-echo "  server-cert.pem  - Certificato server"
-echo "  server-key.pem   - Chiave server"
+echo "Certificati generati (con AKI):"
+echo "  ca-cert.pem          - Certificato CA (da installare nel sistema)"
+echo "  ca-key.pem           - Chiave CA (tenere segreto)"
+echo "  server-cert.pem      - Certificato server (con AKI)"
+echo "  server-key.pem       - Chiave server"
+echo "  server-fullchain.pem - Catena completa (server + CA)"
 echo ""
 echo "Passo successivo: installa la CA con ./install-ca.sh"
