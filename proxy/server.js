@@ -122,6 +122,49 @@ function cleanSchema(obj) {
   return cleaned;
 }
 
+function logReasoningControls(parsed) {
+  const thinking = parsed.thinking;
+  const thinkingType = thinking?.type || "default (enabled by DeepSeek)";
+  const requestedEffort = parsed.output_config?.effort;
+  const effectiveEffort = requestedEffort === "xhigh"
+    ? "max"
+    : (["low", "medium"].includes(requestedEffort) ? "high" : (requestedEffort || "default (high; agent requests may become max)"));
+
+  console.log(`[proxy] │  thinking:    ${thinkingType}`);
+  console.log(`[proxy] │  effort:      ${requestedEffort || "none"} -> ${effectiveEffort}`);
+
+  if (thinking?.budget_tokens !== undefined) {
+    console.log(`[proxy] │  note:        thinking.budget_tokens=${thinking.budget_tokens} (ignored by DeepSeek)`);
+  }
+  if (thinkingType !== "disabled" && (parsed.temperature !== undefined || parsed.top_p !== undefined)) {
+    const sampling = [
+      parsed.temperature !== undefined ? `temperature=${parsed.temperature}` : null,
+      parsed.top_p !== undefined ? `top_p=${parsed.top_p}` : null,
+    ].filter(Boolean).join(", ");
+    console.log(`[proxy] │  note:        ${sampling} (ignored by DeepSeek in thinking mode)`);
+  }
+  if (thinkingType === "adaptive") {
+    console.log("[proxy] │  warning:     thinking.type=adaptive is not documented by DeepSeek; expected enabled/disabled");
+  }
+  if (requestedEffort && !["low", "medium", "high", "xhigh", "max"].includes(requestedEffort)) {
+    console.log(`[proxy] │  warning:     output_config.effort=${requestedEffort} is not documented by DeepSeek`);
+  }
+}
+
+function usageSummary(usage = {}) {
+  return {
+    input: usage.input_tokens ?? 0,
+    output: usage.output_tokens ?? 0,
+    cacheRead: usage.cache_read_input_tokens ?? 0,
+    cacheCreate: usage.cache_creation_input_tokens ?? 0,
+  };
+}
+
+function logUsage(prefix, usage) {
+  const u = usageSummary(usage);
+  console.log(`[proxy] ${prefix} tokens: input=${u.input}, output=${u.output}, cache_read=${u.cacheRead}, cache_create=${u.cacheCreate}`);
+}
+
 // ── Anthropic → OpenAI format conversion ────────────────────
 
 function anthropicToOpenAIBody(parsed) {
@@ -449,7 +492,10 @@ function handleImagePipeline(req, res, parsed, origModel) {
         console.log(`[proxy] [IMAGE] description (${imageDescription.length} chars): ${imageDescription.substring(0, 200)}...`);
       }
 
-      if (!parsed.max_tokens || parsed.max_tokens < 1024) parsed.max_tokens = 8192;
+      if (!parsed.max_tokens || parsed.max_tokens < 1024) {
+        console.log(`[proxy] max_tokens override: ${parsed.max_tokens ?? "none"} -> 8192`);
+        parsed.max_tokens = 8192;
+      }
 
       if (parsed.messages) {
         for (const msg of parsed.messages) {
@@ -670,7 +716,6 @@ function handleRequest(req, res) {
     const sysInfo = parsed.system
       ? (sysType === "string" ? `string(${parsed.system.length}c)` : `array[${parsed.system.length}]`)
       : "none";
-    const thinkingInfo = parsed.thinking ? parsed.thinking.type || JSON.stringify(parsed.thinking).substring(0, 40) : "none";
     const msgCount = (parsed.messages || []).length;
     const toolCount = (parsed.tools || []).length;
     console.log(`[proxy] ┌─ REQUEST`);
@@ -678,7 +723,7 @@ function handleRequest(req, res) {
     console.log(`[proxy] │  max_tokens:  ${origMaxTokens}`);
     console.log(`[proxy] │  stream:      ${!!parsed.stream}`);
     console.log(`[proxy] │  system:      ${sysInfo}`);
-    console.log(`[proxy] │  thinking:    ${thinkingInfo}`);
+    logReasoningControls(parsed);
     console.log(`[proxy] │  messages:    ${msgCount}`);
     console.log(`[proxy] │  tools:       ${toolCount}`);
     console.log(`[proxy] │  endpoint:    ${epKey} (${ep.label})`);
@@ -707,7 +752,10 @@ function handleRequest(req, res) {
       parsed.model = upstreamModel;
       console.log(`[proxy] model map: ${origModel} → ${upstreamModel}`);
 
-      if (!parsed.max_tokens || parsed.max_tokens < 1024) parsed.max_tokens = 8192;
+      if (!parsed.max_tokens || parsed.max_tokens < 1024) {
+        console.log(`[proxy] max_tokens override: ${parsed.max_tokens ?? "none"} -> 8192`);
+        parsed.max_tokens = 8192;
+      }
 
       const newBody = JSON.stringify(parsed);
       const upstreamPath = ep.basePath + req.url.split("?")[0];
@@ -747,6 +795,7 @@ function handleRequest(req, res) {
           let buffer = "";
           let eventCount = 0;
           let firstEventType = "";
+          const streamUsage = {};
           upstreamRes.on("data", (chunk) => {
             buffer += chunk.toString();
             const lines = buffer.split("\n");
@@ -758,6 +807,8 @@ function handleRequest(req, res) {
                 try {
                   const event = JSON.parse(data);
                   if (event.type === "message_start" && event.message?.model) event.message.model = origModel;
+                  if (event.type === "message_start" && event.message?.usage) Object.assign(streamUsage, event.message.usage);
+                  if (event.type === "message_delta" && event.usage) Object.assign(streamUsage, event.usage);
                   eventCount++;
                   if (!firstEventType) firstEventType = event.type;
                   res.write("data: " + JSON.stringify(event) + "\n\n");
@@ -769,6 +820,7 @@ function handleRequest(req, res) {
             if (buffer) res.write(buffer + "\n");
             res.end();
             console.log(`[proxy] ← SSE stream complete: ${eventCount} events, first=${firstEventType}`);
+            logUsage("←", streamUsage);
           });
         } else {
           let d = "";
@@ -778,6 +830,7 @@ function handleRequest(req, res) {
             try {
               const resp = JSON.parse(d);
               resp.model = origModel;
+              if (resp.usage) logUsage("←", resp.usage);
               res.end(JSON.stringify(resp));
             } catch { res.end(d); }
           });
