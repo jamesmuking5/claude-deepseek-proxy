@@ -1,0 +1,16 @@
+{
+  "name": "claude-deepseek-proxy",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Modular LLM proxy — Anthropic, OpenAI Chat Completions, and Gemini backends",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "packageManager": "pnpm@11.11.0",
+  "scripts": {
+    "test": "node --test proxy/test/**/*.test.js",
+    "test:coverage": "node --test --experimental-test-coverage proxy/test/**/*.test.js",
+    "test:live": "node proxy/test-proxy.js",
+    "check": "node --check proxy/server.js && node --test proxy/test/**/*.test.js"
+  }
+}
