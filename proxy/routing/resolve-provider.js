@@ -2,7 +2,7 @@
 
 const { hasImages } = require("../providers/gemini");
 
-const PRIORITY_ORDER = ["opencode", "zai", "deepseek", "gemini", "openai_compat"];
+const PRIORITY_ORDER = ["opencode", "xai", "zai", "deepseek", "gemini", "openai_compat"];
 
 function resolveProvider(providers, parsed) {
   const origModel = parsed.model || "unknown";

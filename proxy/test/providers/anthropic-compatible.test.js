@@ -39,6 +39,36 @@ function baseParsed(overrides) {
 }
 
 describe("Anthropic-compatible provider — non-stream", () => {
+  it("preserves the /v1/messages upstream path", async () => {
+    let receivedPath;
+    const mock = await startMockServer((req, res) => {
+      receivedPath = req.url;
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        id: "msg_1", type: "message", role: "assistant",
+        model: "upstream-test", content: [], stop_reason: "end_turn",
+        usage: { input_tokens: 1, output_tokens: 1 },
+      }));
+    });
+    const provider = baseProvider(mock.url + "/api/anthropic");
+    await send(provider, baseParsed(), "claude-test", "/v1/messages?beta=true");
+    assert.strictEqual(receivedPath, "/api/anthropic/v1/messages");
+    mock.server.close();
+  });
+
+  it("preserves the /v1/messages/count_tokens upstream path", async () => {
+    let receivedPath;
+    const mock = await startMockServer((req, res) => {
+      receivedPath = req.url;
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ input_tokens: 42 }));
+    });
+    const provider = baseProvider(mock.url + "/api/anthropic");
+    await send(provider, baseParsed(), "claude-test", "/v1/messages/count_tokens?beta=true");
+    assert.strictEqual(receivedPath, "/api/anthropic/v1/messages/count_tokens");
+    mock.server.close();
+  });
+
   it("returns translated error on upstream 4xx", async () => {
     const mock = await startMockServer((_req, res) => {
       res.writeHead(400, { "Content-Type": "application/json" });

@@ -145,6 +145,17 @@ function anthropicToOpenAIBody(parsed, provider) {
     stream: !!parsed.stream,
   };
 
+  if (provider.reasoningEffort) {
+    const effortMap = {
+      low: "low",
+      medium: "medium",
+      high: "high",
+      xhigh: "high",
+      max: "high",
+    };
+    body.reasoning_effort = effortMap[parsed.output_config?.effort] || provider.reasoningEffort;
+  }
+
   const maxTokens = parsed.max_tokens;
   if (maxTokens !== undefined && maxTokens > 0) {
     if (provider.id === "opencode") {

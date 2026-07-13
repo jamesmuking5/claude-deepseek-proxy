@@ -22,7 +22,7 @@ proxy/
 │   └── gemini.js              Anthropic↔Gemini conversion + SSE state
 ├── providers/
 │   ├── anthropic-compatible.js  DeepSeek, Z.AI (passthrough + model restore)
-│   ├── openai-compatible.js     OpenCode, generic /v1/chat/completions backends
+│   ├── openai-compatible.js     OpenCode, xAI, generic /v1/chat/completions backends
 │   └── gemini.js                Image OCR pipeline (describe → inject → forward)
 ├── transport/
 │   ├── http.js                  HTTP/HTTPS request builder, streaming + non-streaming

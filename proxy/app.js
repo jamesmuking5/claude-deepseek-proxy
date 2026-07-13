@@ -175,7 +175,7 @@ async function dispatchProvider(req, res, parsed, origModel, provider, upstreamM
   if (provider.protocol === "anthropic") {
     console.log(`[proxy] model map: ${origModel} → ${upstreamModel}`);
 
-    const result = await anthropicCompat.send(provider, parsed, origModel);
+    const result = await anthropicCompat.send(provider, parsed, origModel, req.url);
 
     if (result.isStream) {
       return anthropicCompat.pipeSSE(result, res, req).then((summary) => {
@@ -198,7 +198,7 @@ async function dispatchProvider(req, res, parsed, origModel, provider, upstreamM
   if (provider.protocol === "openai-chat") {
     console.log(`[proxy] [${provider.id}] model map: ${origModel} → ${upstreamModel}`);
 
-    const result = await openaiCompat.send(provider, parsed, origModel);
+    const result = await openaiCompat.send(provider, parsed, origModel, req.url);
 
     if (result.isStream) {
       return openaiCompat.pipeSSE(result, res, req);

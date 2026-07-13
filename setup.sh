@@ -143,6 +143,12 @@ ask_api_keys() {
   echo "  → Get your API key at: https://z.ai"
   echo ""
   read -p "  Z.AI API key (press Enter to skip): " ZAI_KEY
+
+  echo ""
+  echo "  xAI Grok 4.5 is optional (enables the claude-opus-4-9 model)."
+  echo "  → Get your API key at: https://console.x.ai"
+  echo ""
+  read -p "  xAI API key (press Enter to skip): " XAI_KEY
   
   cat > "$ENV_FILE" << EOF
 # Claude DeepSeek Proxy — API keys
@@ -156,6 +162,10 @@ GEMINI_API_KEY=$GEMINI_KEY
 
 # Z.AI API Key (https://z.ai — optional, GLM-5.2 via claude-opus-4-8)
 ZAI_API_KEY=$ZAI_KEY
+
+# xAI API Key (https://console.x.ai — optional, Grok 4.5 via claude-opus-4-9)
+XAI_API_KEY=$XAI_KEY
+XAI_REASONING_EFFORT=low
 EOF
   
   echo ""
@@ -214,6 +224,8 @@ manual_steps() {
   echo -e "     • Models to add:"
   echo -e "       - claude-sonnet-4-5  (sonnet 4.5)"
   echo -e "       - claude-opus-4-7    (claude opus 4.7)"
+  echo -e "       - claude-opus-4-8    (glm 5.2, if Z.AI configured)"
+  echo -e "       - claude-opus-4-9    (grok 4.5, if xAI configured)"
   echo -e "     Click 'Apply locally'"
   echo ""
   echo -e "  ${YELLOW}⚠ Do NOT sign in to claude.ai — stay on the login screen.${NC}"

@@ -84,6 +84,29 @@ describe("anthropicToOpenAIBody — token limits", () => {
   });
 });
 
+describe("anthropicToOpenAIBody — reasoning effort", () => {
+  it("uses the provider default reasoning effort", () => {
+    const provider = mockProvider();
+    provider.reasoningEffort = "low";
+    const result = protocol.anthropicToOpenAIBody({
+      model: "grok-4.5",
+      messages: [{ role: "user", content: "Hi" }],
+    }, provider);
+    assert.strictEqual(result.reasoning_effort, "low");
+  });
+
+  it("maps Claude xhigh effort to xAI high", () => {
+    const provider = mockProvider();
+    provider.reasoningEffort = "low";
+    const result = protocol.anthropicToOpenAIBody({
+      model: "grok-4.5",
+      output_config: { effort: "xhigh" },
+      messages: [{ role: "user", content: "Hi" }],
+    }, provider);
+    assert.strictEqual(result.reasoning_effort, "high");
+  });
+});
+
 describe("anthropicToOpenAIBody — conversions", () => {
   it("converts simple text message", () => {
     const parsed = {

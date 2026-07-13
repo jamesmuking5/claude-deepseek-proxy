@@ -57,6 +57,7 @@ Same flow — the script handles everything interactively.
 | `claude-sonnet-4-5` | DeepSeek V4 Flash (or OpenCode) | Text, reasoning, chat |
 | `claude-opus-4-7` | DeepSeek V4 Pro (or OpenCode) | Complex reasoning |
 | `claude-opus-4-8` | **Z.AI GLM-5.2** | GLM-5.2 reasoning (requires `ZAI_API_KEY`) |
+| `claude-opus-4-9` | **xAI Grok 4.5** | Coding and agentic tasks (requires `XAI_API_KEY`) |
 | Images (auto-routed) | **Gemini Flash 2.5** | OCR, image analysis, vision |
 
 Images are auto-detected — no manual model switching needed. Just use `claude-sonnet-4-5` for everything.
@@ -169,6 +170,8 @@ Edit `.env`:
 DEEPSEEK_API_KEY=sk-...   # https://platform.deepseek.com
 GEMINI_API_KEY=...         # https://aistudio.google.com/apikey
 ZAI_API_KEY=...            # https://z.ai (optional — GLM-5.2 via claude-opus-4-8)
+XAI_API_KEY=...            # https://console.x.ai (optional — Grok 4.5 via claude-opus-4-9)
+XAI_REASONING_EFFORT=low   # low, medium, or high; low minimizes interactive latency
 ```
 
 ### 2. Generate TLS certificates
@@ -230,7 +233,7 @@ Create `developer_settings.json` in **both** paths:
    - Inference provider: `Gateway`
    - Gateway base URL: `https://localhost:8877`
    - Gateway API key: `proxy-local-key`
-   - Add models: `claude-sonnet-4-5` (label: `sonnet 4.5`), `claude-opus-4-7` (label: `claude opus 4.7`), and optionally `claude-opus-4-8` (label: `glm 5.2`) for Z.AI GLM-5.2
+   - Add models: `claude-sonnet-4-5` (label: `sonnet 4.5`), `claude-opus-4-7` (label: `claude opus 4.7`), optionally `claude-opus-4-8` (label: `glm 5.2`) for Z.AI, and optionally `claude-opus-4-9` (label: `grok 4.5`) for xAI
 4. Click **Apply locally**
 
 ### 6. Start the proxy and relaunch Claude Desktop

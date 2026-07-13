@@ -66,7 +66,10 @@ describe("Integration", () => {
       let body = "";
       req.on("data", (c) => body += c);
       req.on("end", () => {
-        if (req.url === "/anthropic/messages") {
+        if (req.url === "/anthropic/v1/messages/count_tokens") {
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ input_tokens: 42 }));
+        } else if (req.url === "/anthropic/messages" || req.url === "/anthropic/v1/messages") {
           let parsed;
           try { parsed = JSON.parse(body); } catch { parsed = {}; }
           if (parsed.stream) {
@@ -216,6 +219,16 @@ describe("Integration", () => {
     const body = JSON.parse(resp.body);
     assert.strictEqual(body.model, "claude-sonnet-4-5");
     assert.strictEqual(body.content[0].text, "Hello from mock DeepSeek!");
+  });
+
+  it("Anthropic /v1/messages/count_tokens preserves the upstream endpoint", async () => {
+    const resp = await httpPost("127.0.0.1", proxyPort, "/v1/messages/count_tokens?beta=true", {
+      model: "claude-sonnet-4-5",
+      messages: [{ role: "user", content: "Hello" }],
+    });
+    const body = JSON.parse(resp.body);
+    assert.strictEqual(resp.status, 200);
+    assert.strictEqual(body.input_tokens, 42);
   });
 
   it("Anthropic passthrough streaming SSE", async () => {

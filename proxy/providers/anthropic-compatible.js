@@ -3,11 +3,26 @@
 const { sendRequest, sendStreamRequest } = require("../transport/http");
 const protocol = require("../protocols/anthropic");
 
-async function send(provider, parsed, origModel) {
+async function send(provider, parsed, origModel, requestUrl = "/messages") {
   const upstreamModel = provider.modelMap[origModel] || provider.defaultModel;
   const { body, path, headers } = protocol.buildRequest(parsed, upstreamModel, provider);
 
-  const url = provider.baseUrl + path + "/messages";
+  const requestPath = new URL(requestUrl, "http://localhost").pathname;
+  const allowedPaths = new Set([
+    "/messages",
+    "/messages/count_tokens",
+    "/v1/messages",
+    "/v1/messages/count_tokens",
+  ]);
+  if (!allowedPaths.has(requestPath)) {
+    return {
+      status: 404,
+      body: { type: "error", error: { type: "not_found_error", message: "Unsupported messages endpoint" } },
+      isStream: false,
+    };
+  }
+
+  const url = provider.baseUrl + path + requestPath;
 
   if (body.stream) {
     return streamResponse(url, headers, body, origModel);

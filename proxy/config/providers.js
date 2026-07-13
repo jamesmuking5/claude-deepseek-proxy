@@ -9,6 +9,13 @@ function parseBool(raw, label) {
   throw new Error(`${label} must be "true" or "false", got: ${raw}`);
 }
 
+function parseChoice(raw, label, choices) {
+  if (!choices.includes(raw)) {
+    throw new Error(`${label} must be one of: ${choices.join(", ")}`);
+  }
+  return raw;
+}
+
 function buildProviders() {
   const providers = {};
 
@@ -56,6 +63,37 @@ function buildProviders() {
         streaming: true,
         tools: true,
         parallelToolCalls: false,
+        vision: false,
+        reasoning: true,
+        streamUsage: true,
+      },
+    };
+  }
+
+  const xaiKey = getOptional("XAI_API_KEY", null);
+  if (xaiKey) {
+    const reasoningEffort = parseChoice(
+      getOptional("XAI_REASONING_EFFORT", "low"),
+      "XAI_REASONING_EFFORT",
+      ["low", "medium", "high"]
+    );
+    providers.xai = {
+      id: "xai",
+      label: "xAI Grok 4.5",
+      protocol: "openai-chat",
+      baseUrl: "https://api.x.ai/v1",
+      basePath: "/chat/completions",
+      tokenizePath: "/tokenize-text",
+      apiKey: xaiKey,
+      reasoningEffort,
+      modelMap: {
+        "claude-opus-4-9": "grok-4.5",
+      },
+      defaultModel: "grok-4.5",
+      capabilities: {
+        streaming: true,
+        tools: true,
+        parallelToolCalls: true,
         vision: false,
         reasoning: true,
         streamUsage: true,

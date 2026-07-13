@@ -120,6 +120,25 @@ describe("resolveProvider", () => {
     assert.strictEqual(result.provider.id, "opencode");
   });
 
+  it("routes claude-opus-4-9 to xAI Grok 4.5", () => {
+    const providers = makeProviders({
+      xai: {
+        id: "xai",
+        protocol: "openai-chat",
+        apiKey: "xai-test",
+        modelMap: { "claude-opus-4-9": "grok-4.5" },
+        defaultModel: "grok-4.5",
+        capabilities: { streaming: true, tools: true, vision: false, reasoning: true },
+      },
+    });
+    const result = resolveProvider(providers, {
+      model: "claude-opus-4-9",
+      messages: [{ role: "user", content: "Hi" }],
+    });
+    assert.strictEqual(result.provider.id, "xai");
+    assert.strictEqual(result.upstreamModel, "grok-4.5");
+  });
+
   it("skips providers without API key", () => {
     const providers = makeProviders({ deepseek: { ...makeProviders().deepseek, apiKey: null }, gemini: null });
     const result = resolveProvider(providers, {

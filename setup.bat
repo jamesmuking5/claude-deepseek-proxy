@@ -134,6 +134,14 @@ echo.
 set "ZAI_KEY="
 set /p "ZAI_KEY=  Z.AI API key (Enter to skip): "
 
+echo.
+echo   xAI Grok 4.5 is optional (enables the claude-opus-4-9 model^).
+echo   -^> Get your API key at: https://console.x.ai
+echo.
+
+set "XAI_KEY="
+set /p "XAI_KEY=  xAI API key (Enter to skip): "
+
 :: Write .env based on provider choice
 if "!LLM_PROVIDER!"=="2" (
     (
@@ -148,6 +156,10 @@ echo GEMINI_API_KEY=!GEMINI_KEY!
 echo.
 echo # Z.AI API Key (https://z.ai -- optional, GLM-5.2 via claude-opus-4-8^)
 echo ZAI_API_KEY=!ZAI_KEY!
+echo.
+echo # xAI API Key (https://console.x.ai -- optional, Grok 4.5 via claude-opus-4-9^)
+echo XAI_API_KEY=!XAI_KEY!
+echo XAI_REASONING_EFFORT=low
     ) > "%ENV_FILE%"
 ) else (
     (
@@ -162,6 +174,10 @@ echo GEMINI_API_KEY=!GEMINI_KEY!
 echo.
 echo # Z.AI API Key (https://z.ai -- optional, GLM-5.2 via claude-opus-4-8^)
 echo ZAI_API_KEY=!ZAI_KEY!
+echo.
+echo # xAI API Key (https://console.x.ai -- optional, Grok 4.5 via claude-opus-4-9^)
+echo XAI_API_KEY=!XAI_KEY!
+echo XAI_REASONING_EFFORT=low
     ) > "%ENV_FILE%"
 )
 
@@ -284,6 +300,8 @@ echo      - Gateway API key:     proxy-local-key
 echo      - Models to add:
 echo          claude-sonnet-4-5  (label: sonnet 4.5)
 echo          claude-opus-4-7    (label: claude opus 4.7)
+echo          claude-opus-4-8    (label: glm 5.2, if Z.AI configured)
+echo          claude-opus-4-9    (label: grok 4.5, if xAI configured)
 echo      Click 'Apply locally'
 echo.
 echo   WARNING: Do NOT sign in to claude.ai -- stay on the login screen.
