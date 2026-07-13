@@ -29,11 +29,43 @@ provider to, remember:
 
 ## Planned
 
+- **Sampling-parameter policy per provider (temperature/top_p/penalties)**
+  Anthropic temp is 0–1, OpenAI-compat 0–2 (1.0 = neutral) — verbatim
+  passthrough (current behavior) is semantically wrong in both directions,
+  and reasoning models either ignore temperature (Grok, DeepSeek-reasoner)
+  or reject it with 400 (OpenAI o-series). Interim plan: drop temp/top_p for
+  providers flagged `reasoning: true`, passthrough otherwise, optional
+  per-provider hard override (e.g. `XAI_TEMPERATURE=0.7`). Full
+  mode/scale/per-param matrix belongs in the SQLite + Web UI config
+  (see below) — flat .env cannot express per-provider × per-parameter
+  policies sanely.
+
 - **SQLite-backed config + Web UI** to replace the (possibly outdated)
   `setup.sh` / `setup.bat` flow: manage providers, API keys, model maps, and
   per-provider reasoning-level mapping (incl. allowed effort vocabularies per
   upstream, e.g. OpenAI `minimal|low|medium|high` vs xAI grok-mini `low|high`)
   through a GUI instead of hand-edited .env files.
+
+## From model audits (2026-07-14, see optimization-discussion-*.md)
+
+Grok audited the pre-refactor monolith (stale worktree) — most of its
+correctness findings are obsolete; DeepSeek audited current code but its
+headline keep-alive finding is wrong (Node 22 `https.globalAgent` already
+defaults to `keepAlive: true`; Grok's report correctly downgraded this).
+Surviving items:
+
+- **Graceful shutdown**: `server.js` has no SIGINT/SIGTERM handler — every
+  `pm2 restart` kills in-flight streams, which clients then retry (double
+  billing). Handle signals: stop accepting, drain active streams, exit.
+- **Early oversized-body reject**: check `Content-Length` against the 50MB
+  cap before buffering instead of after.
+- **Anthropic passthrough hot path**: each SSE event is JSON.parse +
+  transform (model rewrite only) + JSON.stringify; a targeted string
+  replace or passthrough would skip both. Low priority, measurable only
+  on very long streams.
+- **`certs/generate-certs.mjs` broken**: produced PEMs Node rejects with
+  `ERR_OSSL_ASN1_WRONG_TAG` (Grok, E2-verified). Setup path needs rework —
+  folds into the SQLite + Web UI setup plan.
 
 ## Deferred
 
