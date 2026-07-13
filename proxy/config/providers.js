@@ -91,7 +91,7 @@ function buildProviders() {
       apiKey: xaiKey,
       reasoningEffort,
       thinkingEnabled,
-      modelMap: {
+      modelMap: parseModelMap(getOptional("XAI_MODEL_MAP", null), "XAI_MODEL_MAP") || {
         "claude-opus-4-9": "grok-4.5",
       },
       defaultModel: "grok-4.5",
