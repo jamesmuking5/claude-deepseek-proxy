@@ -11,7 +11,11 @@ const ANTHROPIC_ONLY_SCHEMA_KEYS = new Set([
 // cache_read_input_tokens; reasoning tokens are billed as output.
 function mapUsage(usage) {
   const promptTokens = usage?.prompt_tokens || 0;
-  const cachedTokens = usage?.prompt_tokens_details?.cached_tokens || 0;
+  // OpenAI/xAI report cache hits in prompt_tokens_details.cached_tokens;
+  // DeepSeek uses prompt_cache_hit_tokens at the top level.
+  const cachedTokens = usage?.prompt_tokens_details?.cached_tokens
+    || usage?.prompt_cache_hit_tokens
+    || 0;
   const visibleOutputTokens = usage?.completion_tokens || 0;
   const reasoningTokens = usage?.completion_tokens_details?.reasoning_tokens || 0;
   const mapped = {

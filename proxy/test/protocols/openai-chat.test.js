@@ -409,6 +409,19 @@ describe("OpenAISSEState — lifecycle", () => {
     assert.strictEqual(state.finalize().length, 0);
   });
 
+  it("maps DeepSeek prompt_cache_hit_tokens to cache_read_input_tokens", () => {
+    const state = new protocol.OpenAISSEState("test");
+    state.transform({ choices: [{}] });
+    state.transform({ choices: [{ delta: { content: "x" } }] });
+    const events = state.transform({
+      choices: [{ finish_reason: "stop", delta: {} }],
+      usage: { prompt_tokens: 100, completion_tokens: 5, prompt_cache_hit_tokens: 60 },
+    });
+    const delta = events.find(e => e.type === "message_delta");
+    assert.strictEqual(delta.usage.input_tokens, 40);
+    assert.strictEqual(delta.usage.cache_read_input_tokens, 60);
+  });
+
   it("defers message_stop until trailing usage chunk arrives", () => {
     const state = new protocol.OpenAISSEState("test");
     state.transform({ choices: [{}] });
