@@ -177,7 +177,7 @@ function pipeSSE(streamResult, res, req) {
       res.writeHead(502, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ type: "error", error: { type: "api_error", message: err.message } }));
     } else if (!res.writableEnded) {
-      res.write("data: " + JSON.stringify({
+      res.write("event: error\ndata: " + JSON.stringify({
         type: "error",
         error: { type: "api_error", message: err.message },
       }) + "\n\n");
@@ -204,7 +204,7 @@ function pipeSSE(streamResult, res, req) {
     draining = true;
     while (eventQueue.length > 0) {
       const ev = eventQueue.shift();
-      const ok = res.write("data: " + JSON.stringify(ev) + "\n\n");
+      const ok = res.write("event: " + ev.type + "\ndata: " + JSON.stringify(ev) + "\n\n");
       if (!ok) {
         if (!upstreamPaused) {
           upstreamPaused = true;

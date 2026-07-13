@@ -416,7 +416,7 @@ describe("Integration", () => {
         writeCount++;
         written.push(data);
         try {
-          const ev = JSON.parse(data.replace(/^data: /, "").replace(/\n\n$/, ""));
+          const ev = JSON.parse(data.replace(/^event: [^\n]*\n/, "").replace(/^data: /, "").replace(/\n\n$/, ""));
           if (ev.type && !probes.types.includes(ev.type)) probes.types.push(ev.type);
         } catch {}
         if (writeCount === 1) return false;
@@ -621,7 +621,7 @@ describe("Integration", () => {
     const eventTypes = [];
     for (const w of written) {
       try {
-        const ev = JSON.parse(w.replace(/^data: /, "").replace(/\n\n$/, ""));
+        const ev = JSON.parse(w.replace(/^event: [^\n]*\n/, "").replace(/^data: /, "").replace(/\n\n$/, ""));
         if (ev.type && !eventTypes.includes(ev.type)) eventTypes.push(ev.type);
       } catch {}
     }
