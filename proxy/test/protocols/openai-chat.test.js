@@ -400,8 +400,39 @@ describe("OpenAISSEState — lifecycle", () => {
     const state = new protocol.OpenAISSEState("test");
     state.transform({ choices: [{}] });
     state.transform({ choices: [{ delta: { content: "x" } }] });
-    const events = state.transform({ choices: [{ finish_reason: "stop", delta: {} }] });
+    const events = state.transform({
+      choices: [{ finish_reason: "stop", delta: {} }],
+      usage: { prompt_tokens: 5, completion_tokens: 2 },
+    });
     assert.strictEqual(events.filter(e => e.type === "message_stop").length, 1);
+    // stream end must not produce a second one
+    assert.strictEqual(state.finalize().length, 0);
+  });
+
+  it("defers message_stop until trailing usage chunk arrives", () => {
+    const state = new protocol.OpenAISSEState("test");
+    state.transform({ choices: [{}] });
+    state.transform({ choices: [{ delta: { content: "x" } }] });
+    const finishEvents = state.transform({ choices: [{ finish_reason: "stop", delta: {} }] });
+    assert.strictEqual(finishEvents.some(e => e.type === "message_stop"), false,
+      "finish without usage must not terminate yet");
+    const usageEvents = state.transform({ choices: [], usage: { prompt_tokens: 9, completion_tokens: 3 } });
+    const delta = usageEvents.find(e => e.type === "message_delta");
+    assert.strictEqual(delta.usage.input_tokens, 9);
+    assert.strictEqual(usageEvents[usageEvents.length - 1].type, "message_stop");
+  });
+
+  it("finalize flushes deferred termination at stream end without usage", () => {
+    const state = new protocol.OpenAISSEState("test");
+    state.transform({ choices: [{}] });
+    state.transform({ choices: [{ delta: { content: "x" } }] });
+    state.transform({ choices: [{ finish_reason: "stop", delta: {} }] });
+    const events = state.finalize();
+    assert.strictEqual(events[0].type, "message_delta");
+    assert.strictEqual(events[0].delta.stop_reason, "end_turn");
+    assert.strictEqual(events[1].type, "message_stop");
+    // idempotent
+    assert.strictEqual(state.finalize().length, 0);
   });
 
   it("returns null for chunks after finish (no duplicates)", () => {
@@ -417,7 +448,10 @@ describe("OpenAISSEState — lifecycle", () => {
     const state = new protocol.OpenAISSEState("test");
     state.transform({ choices: [{}] });
     state.transform({ choices: [{ delta: { content: "x" } }] });
-    state.transform({ choices: [{ finish_reason: "stop", delta: {} }] });
+    state.transform({
+      choices: [{ finish_reason: "stop", delta: {} }],
+      usage: { prompt_tokens: 1, completion_tokens: 1 },
+    });
     // second finish chunk
     const result = state.transform({ choices: [{ finish_reason: "stop", delta: {} }] });
     assert.strictEqual(result, null);
@@ -554,17 +588,21 @@ describe("OpenAISSEState — streamed tool calls", () => {
 
     const events = state.transform({
       choices: [{ finish_reason: "stop", delta: {} }],
+      usage: { prompt_tokens: 4, completion_tokens: 2 },
     });
-    assert.ok(events.some(e => e.type === "error" && e.error.message.includes("orphan")),
-      "must emit error for incomplete tool call on stream end");
-    // Error is terminal — no message_delta or message_stop after
-    assert.strictEqual(events.some(e => e.type === "message_delta"), false,
-      "must NOT emit message_delta after incomplete tool error");
-    assert.strictEqual(events.some(e => e.type === "message_stop"), false,
-      "must NOT emit message_stop after incomplete tool error");
+    // Incomplete tool call is dropped; stream must still terminate cleanly
+    // so clients do not discard the response and retry the whole request.
+    assert.strictEqual(events.some(e => e.type === "error"), false,
+      "must not emit error event for incomplete tool call");
+    const delta = events.find(e => e.type === "message_delta");
+    assert.ok(delta, "must emit message_delta");
+    assert.strictEqual(delta.delta.stop_reason, "max_tokens",
+      "incomplete tool call surfaces as max_tokens stop");
+    assert.strictEqual(events[events.length - 1].type, "message_stop",
+      "must end with message_stop");
   });
 
-  it("tool with id+name but no args is incomplete and produces terminal error", () => {
+  it("tool with id+name but no args is dropped and stream terminates cleanly", () => {
     const state = new protocol.OpenAISSEState("test");
     state.transform({ choices: [{}] });
 
@@ -575,19 +613,20 @@ describe("OpenAISSEState — streamed tool calls", () => {
 
     const events = state.transform({
       choices: [{ finish_reason: "tool_calls", delta: {} }],
+      usage: { prompt_tokens: 4, completion_tokens: 2 },
     });
-    assert.ok(events.some(e => e.type === "error" && e.error.message.includes("call_abc")),
-      "must emit error for tool with id+name but never started (no args)");
-    assert.strictEqual(events.filter(e => e.type === "error").length, 1,
-      "exactly one error event");
-    assert.strictEqual(events.some(e => e.type === "message_delta"), false,
-      "must NOT emit message_delta");
-    assert.strictEqual(events.some(e => e.type === "message_stop"), false,
-      "must NOT emit message_stop");
+    assert.strictEqual(events.some(e => e.type === "error"), false,
+      "must not emit error event for dropped tool call");
+    const delta = events.find(e => e.type === "message_delta");
+    assert.ok(delta, "must emit message_delta");
+    assert.strictEqual(delta.delta.stop_reason, "max_tokens",
+      "incomplete tool call surfaces as max_tokens stop");
+    assert.strictEqual(events[events.length - 1].type, "message_stop",
+      "must end with message_stop");
 
     // Subsequent chunks produce no output
     assert.strictEqual(state.transform({ choices: [{ delta: { content: "extra" } }] }), null,
-      "must return null for chunks after terminal error");
+      "must return null for chunks after stream finished");
   });
 
   it("in-progress tool call receives additional args after start", () => {

@@ -262,6 +262,8 @@ function pipeSSE(streamResult, res, req) {
     if (settled) return;
     try {
       parser.flush();
+      const finalEvents = sseState.finalize();
+      if (finalEvents.length > 0) enqueue(finalEvents);
     } catch (e) {
       fail(e);
       return;

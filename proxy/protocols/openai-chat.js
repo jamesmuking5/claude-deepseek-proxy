@@ -6,6 +6,22 @@ const ANTHROPIC_ONLY_SCHEMA_KEYS = new Set([
   "anthropic",
 ]);
 
+// OpenAI usage → Anthropic usage. Cached prompt tokens are billed separately,
+// so they are subtracted from input_tokens and surfaced as
+// cache_read_input_tokens; reasoning tokens are billed as output.
+function mapUsage(usage) {
+  const promptTokens = usage?.prompt_tokens || 0;
+  const cachedTokens = usage?.prompt_tokens_details?.cached_tokens || 0;
+  const visibleOutputTokens = usage?.completion_tokens || 0;
+  const reasoningTokens = usage?.completion_tokens_details?.reasoning_tokens || 0;
+  const mapped = {
+    input_tokens: Math.max(0, promptTokens - cachedTokens),
+    output_tokens: visibleOutputTokens + reasoningTokens,
+  };
+  if (cachedTokens > 0) mapped.cache_read_input_tokens = cachedTokens;
+  return mapped;
+}
+
 const FINISH_MAP = {
   "stop": "end_turn",
   "length": "max_tokens",
@@ -145,6 +161,10 @@ function anthropicToOpenAIBody(parsed, provider) {
     stream: !!parsed.stream,
   };
 
+  if (body.stream && provider.capabilities.streamUsage) {
+    body.stream_options = { include_usage: true };
+  }
+
   if (provider.reasoningEffort) {
     const effortMap = {
       low: "low",
@@ -241,15 +261,14 @@ function openAIToAnthropicResponse(raw, origModel) {
     content: content.length > 0 ? content : [{ type: "text", text: "" }],
     stop_reason: FINISH_MAP[finishReason] || "end_turn",
     stop_sequence: null,
-    usage: {
-      input_tokens: usage.prompt_tokens || 0,
-      output_tokens: usage.completion_tokens || 0,
-    },
+    usage: mapUsage(usage),
   };
 }
 
 class OpenAISSEState {
   constructor(origModel) {
+    this.latestUsage = null;
+    this.pendingStopReason = null;
     this.origModel = origModel;
     this.started = false;
     this.finished = false;
@@ -260,6 +279,17 @@ class OpenAISSEState {
 
   transform(chunk) {
     if (this.finished) return null;
+
+    // Some upstreams attach usage to interim chunks; remember the latest so
+    // the finish chunk can fall back to it when it carries none itself.
+    if (chunk.usage) this.latestUsage = chunk.usage;
+
+    // Finish already seen — only the trailing usage chunk is still relevant.
+    if (this.pendingStopReason) {
+      if (!chunk.usage) return null;
+      const finalEvents = this.finalize();
+      return finalEvents.length > 0 ? finalEvents : null;
+    }
 
     const choice = chunk.choices?.[0] || {};
     const delta = choice.delta || {};
@@ -354,44 +384,47 @@ class OpenAISSEState {
     }
 
     if (finishReason && !this.finished) {
-      this.finished = true;
-
+      // An incomplete tool call (id seen but name/args never finished, e.g.
+      // truncated by the output limit) never opened a tool_use block, so it
+      // is dropped. The stream must still terminate cleanly — a missing
+      // message_stop makes clients discard the response and retry the
+      // whole request.
       let hasIncomplete = false;
       for (const ts of this.toolStates) {
         if (ts && !ts.started && ts.id) {
           hasIncomplete = true;
-          events.push({
-            type: "error",
-            error: {
-              type: "invalid_request_error",
-              message: "Incomplete tool call in stream: id='" + ts.id + "' name='" + ts.name + "' missing arguments or name",
-            },
-          });
+          console.warn(`[proxy] dropping incomplete tool call: id='${ts.id}' name='${ts.name}'`);
         }
       }
 
-      if (!hasIncomplete) {
-        for (let i = 0; i < this.blockIndex; i++) {
-          events.push({ type: "content_block_stop", index: i });
-        }
+      for (let i = 0; i < this.blockIndex; i++) {
+        events.push({ type: "content_block_stop", index: i });
+      }
 
-        events.push({
-          type: "message_delta",
-          delta: {
-            stop_reason: FINISH_MAP[finishReason] || "end_turn",
-            stop_sequence: null,
-          },
-          usage: {
-            input_tokens: chunk.usage?.prompt_tokens || 0,
-            output_tokens: chunk.usage?.completion_tokens || 0,
-          },
-        });
+      this.pendingStopReason = hasIncomplete ? "max_tokens" : (FINISH_MAP[finishReason] || "end_turn");
 
-        events.push({ type: "message_stop" });
+      // With stream_options.include_usage, usage arrives in a separate chunk
+      // after finish_reason. Defer message_delta/message_stop until then;
+      // finalize() flushes at stream end if that chunk never comes.
+      if (chunk.usage || this.latestUsage) {
+        events.push(...this.finalize());
       }
     }
 
     return events.length > 0 ? events : null;
+  }
+
+  finalize() {
+    if (this.finished || !this.pendingStopReason) return [];
+    this.finished = true;
+    return [
+      {
+        type: "message_delta",
+        delta: { stop_reason: this.pendingStopReason, stop_sequence: null },
+        usage: mapUsage(this.latestUsage),
+      },
+      { type: "message_stop" },
+    ];
   }
 }
 
