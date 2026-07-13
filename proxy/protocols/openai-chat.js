@@ -89,9 +89,41 @@ function anthropicToOpenAIBody(parsed, provider) {
         const contentParts = [];
         for (const block of msg.content) {
           if (block.type === "tool_result") {
-            const content = typeof block.content === "string"
-              ? block.content
-              : JSON.stringify(block.content);
+            // OpenAI tool messages are text-only. Image blocks inside a
+            // tool_result (e.g. screenshots) would otherwise be stringified
+            // into base64 noise — lift them into the following user message
+            // instead so vision models actually see them.
+            let content;
+            if (typeof block.content === "string") {
+              content = block.content;
+            } else if (Array.isArray(block.content)) {
+              const textBlocks = [];
+              let imageCount = 0;
+              for (const inner of block.content) {
+                if (inner.type === "image" && inner.source) {
+                  if (!provider.capabilities.vision) {
+                    textBlocks.push("[image omitted: provider does not support vision]");
+                    continue;
+                  }
+                  imageCount++;
+                  const mime = inner.source.media_type || "image/jpeg";
+                  contentParts.push({
+                    type: "image_url",
+                    image_url: { url: `data:${mime};base64,${inner.source.data}` },
+                  });
+                } else if (inner.type === "text") {
+                  textBlocks.push(inner.text);
+                } else {
+                  textBlocks.push(JSON.stringify(inner));
+                }
+              }
+              if (imageCount > 0) {
+                textBlocks.push(`[${imageCount} image(s) from this tool result attached to the next user message]`);
+              }
+              content = textBlocks.join("\n");
+            } else {
+              content = JSON.stringify(block.content);
+            }
             toolResults.push({
               role: "tool",
               tool_call_id: block.tool_use_id,
@@ -213,7 +245,9 @@ function anthropicToOpenAIBody(parsed, provider) {
 
     if (parsed.tool_choice) {
       const tc = parsed.tool_choice;
-      if (tc.type === "any") {
+      if (tc.type === "none") {
+        body.tool_choice = "none";
+      } else if (tc.type === "any") {
         body.tool_choice = "required";
       } else if (tc.type === "auto") {
         body.tool_choice = "auto";
@@ -445,12 +479,25 @@ function translateError(upstreamStatus, upstreamBody) {
     }
   } catch {}
 
+  // Preserve statuses clients react to (retry/backoff on 429, re-auth on
+  // 401/403); collapse other 4xx to 400 and 5xx to 502.
+  const STATUS_MAP = {
+    401: { status: 401, type: "authentication_error" },
+    403: { status: 403, type: "permission_error" },
+    413: { status: 413, type: "request_too_large" },
+    429: { status: 429, type: "rate_limit_error" },
+  };
+  const mapped = STATUS_MAP[upstreamStatus]
+    || (upstreamStatus >= 500
+      ? { status: 502, type: "api_error" }
+      : { status: 400, type: "invalid_request_error" });
+
   return {
-    status: upstreamStatus >= 400 && upstreamStatus < 500 ? 400 : 502,
+    status: mapped.status,
     body: {
       type: "error",
       error: {
-        type: upstreamStatus >= 500 ? "api_error" : "invalid_request_error",
+        type: mapped.type,
         message: upstreamMsg,
       },
     },

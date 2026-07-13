@@ -677,4 +677,75 @@ describe("translateError", () => {
     assert.strictEqual(r.status, 502);
     assert.strictEqual(r.body.error.type, "api_error");
   });
+
+  it("preserves 429 as rate_limit_error for client backoff", () => {
+    const r = protocol.translateError(429, '{"error":{"message":"slow down"}}');
+    assert.strictEqual(r.status, 429);
+    assert.strictEqual(r.body.error.type, "rate_limit_error");
+    assert.strictEqual(r.body.error.message, "slow down");
+  });
+
+  it("preserves 401/403 auth statuses", () => {
+    assert.strictEqual(protocol.translateError(401, "{}").status, 401);
+    assert.strictEqual(protocol.translateError(401, "{}").body.error.type, "authentication_error");
+    assert.strictEqual(protocol.translateError(403, "{}").status, 403);
+    assert.strictEqual(protocol.translateError(403, "{}").body.error.type, "permission_error");
+  });
+
+  it("extracts string-form error bodies", () => {
+    const r = protocol.translateError(403, '{"code":"permission-denied","error":"no credits"}');
+    assert.strictEqual(r.body.error.message, "no credits");
+  });
+});
+
+describe("anthropicToOpenAIBody — tool_choice none and tool_result images", () => {
+  const provider = { capabilities: { tools: true, vision: true, streamUsage: false } };
+
+  it("maps tool_choice none", () => {
+    const body = protocol.anthropicToOpenAIBody({
+      messages: [{ role: "user", content: "hi" }],
+      tools: [{ name: "t", input_schema: { type: "object" } }],
+      tool_choice: { type: "none" },
+    }, provider);
+    assert.strictEqual(body.tool_choice, "none");
+  });
+
+  it("lifts tool_result images into a user message for vision providers", () => {
+    const body = protocol.anthropicToOpenAIBody({
+      messages: [
+        { role: "assistant", content: [{ type: "tool_use", id: "t1", name: "screenshot", input: {} }] },
+        { role: "user", content: [{
+          type: "tool_result", tool_use_id: "t1",
+          content: [
+            { type: "text", text: "captured" },
+            { type: "image", source: { type: "base64", media_type: "image/png", data: "AAAA" } },
+          ],
+        }] },
+      ],
+    }, provider);
+    const toolMsg = body.messages.find(m => m.role === "tool");
+    assert.ok(toolMsg.content.includes("captured"));
+    assert.ok(!toolMsg.content.includes("AAAA"), "base64 must not be stringified into tool text");
+    const userMsg = body.messages[body.messages.length - 1];
+    assert.strictEqual(userMsg.role, "user");
+    const img = (Array.isArray(userMsg.content) ? userMsg.content : []).find(p => p.type === "image_url");
+    assert.ok(img, "image must be lifted into user message");
+    assert.ok(img.image_url.url.startsWith("data:image/png;base64,AAAA"));
+  });
+
+  it("omits tool_result images for non-vision providers with a note", () => {
+    const noVision = { capabilities: { tools: true, vision: false, streamUsage: false } };
+    const body = protocol.anthropicToOpenAIBody({
+      messages: [
+        { role: "assistant", content: [{ type: "tool_use", id: "t1", name: "screenshot", input: {} }] },
+        { role: "user", content: [{
+          type: "tool_result", tool_use_id: "t1",
+          content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: "AAAA" } }],
+        }] },
+      ],
+    }, noVision);
+    const toolMsg = body.messages.find(m => m.role === "tool");
+    assert.ok(toolMsg.content.includes("image omitted"));
+    assert.ok(!toolMsg.content.includes("AAAA"));
+  });
 });
