@@ -270,6 +270,13 @@ function logRequest(parsed, origModel) {
   console.log(`[proxy] │  system:      ${sysInfo}`);
   console.log(`[proxy] │  messages:    ${msgCount}`);
   console.log(`[proxy] │  tools:       ${toolCount}`);
+  if (parsed.output_config?.effort) {
+    console.log(`[proxy] │  effort:      ${parsed.output_config.effort} (output_config)`);
+  }
+  if (parsed.thinking) {
+    const t = parsed.thinking;
+    console.log(`[proxy] │  thinking:    ${t.type}${t.budget_tokens ? ` (budget ${t.budget_tokens})` : ""}`);
+  }
   console.log(`[proxy] └─ END REQUEST`);
 }
 
