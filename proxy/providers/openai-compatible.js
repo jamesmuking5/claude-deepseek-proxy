@@ -8,9 +8,11 @@ async function send(provider, parsed, origModel, requestUrl = "/messages") {
   const upstreamModel = provider.modelMap[origModel] || provider.defaultModel;
   const requestPath = new URL(requestUrl, "http://localhost").pathname;
 
-  if (requestPath === "/messages/count_tokens" || requestPath === "/v1/messages/count_tokens") {
+  if (requestPath.endsWith("/count_tokens")) {
     return countTokens(provider, parsed, upstreamModel);
   }
+
+  console.log(`[proxy] [${provider.id}] chat request path: ${requestPath}`);
 
   const startedAt = Date.now();
   parsed.model = upstreamModel;
