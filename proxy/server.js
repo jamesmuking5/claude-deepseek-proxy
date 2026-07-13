@@ -64,6 +64,40 @@ function startServer() {
     }
     console.log("");
   });
+
+  // Graceful shutdown: stop accepting new connections, let in-flight
+  // streams finish (clients retry killed streams, double-billing upstream),
+  // force-exit after a drain window.
+  const DRAIN_TIMEOUT_MS = 15000;
+  let shuttingDown = false;
+
+  function shutdown(signal) {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`[proxy] ${signal} received — draining connections (max ${DRAIN_TIMEOUT_MS}ms)`);
+
+    server.close(() => {
+      console.log("[proxy] all connections drained, exiting");
+      process.exit(0);
+    });
+
+    // Idle keep-alive sockets hold close() open; drop them immediately.
+    if (typeof server.closeIdleConnections === "function") {
+      server.closeIdleConnections();
+    }
+
+    const force = setTimeout(() => {
+      console.warn("[proxy] drain timeout — force closing remaining connections");
+      if (typeof server.closeAllConnections === "function") {
+        server.closeAllConnections();
+      }
+      process.exit(0);
+    }, DRAIN_TIMEOUT_MS);
+    force.unref();
+  }
+
+  process.on("SIGINT", () => shutdown("SIGINT"));
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
 }
 
 startServer();
