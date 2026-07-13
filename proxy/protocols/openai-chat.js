@@ -202,14 +202,28 @@ function anthropicToOpenAIBody(parsed, provider) {
   }
 
   if (provider.reasoningEffort) {
-    const effortMap = {
-      low: "low",
-      medium: "medium",
-      high: "high",
-      xhigh: "high",
-      max: "high",
-    };
-    body.reasoning_effort = effortMap[parsed.output_config?.effort] || provider.reasoningEffort;
+    if (provider.thinkingEnabled === false) {
+      // THINKING=false forces minimal reasoning regardless of client request.
+      body.reasoning_effort = "low";
+    } else {
+      const effortMap = {
+        low: "low",
+        medium: "medium",
+        high: "high",
+        xhigh: "high",
+        max: "high",
+      };
+      let effort = effortMap[parsed.output_config?.effort];
+
+      // Older clients express reasoning via thinking.budget_tokens instead
+      // of output_config.effort — bucket the budget into an effort level.
+      if (!effort && parsed.thinking?.type === "enabled" && parsed.thinking.budget_tokens > 0) {
+        const budget = parsed.thinking.budget_tokens;
+        effort = budget < 4096 ? "low" : budget < 16384 ? "medium" : "high";
+      }
+
+      body.reasoning_effort = effort || provider.reasoningEffort;
+    }
   }
 
   const maxTokens = parsed.max_tokens;

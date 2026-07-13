@@ -105,6 +105,43 @@ describe("anthropicToOpenAIBody — reasoning effort", () => {
     }, provider);
     assert.strictEqual(result.reasoning_effort, "high");
   });
+
+  it("buckets thinking.budget_tokens into effort levels", () => {
+    const provider = mockProvider();
+    provider.reasoningEffort = "medium";
+    const mk = (budget) => protocol.anthropicToOpenAIBody({
+      model: "grok-4.5",
+      thinking: { type: "enabled", budget_tokens: budget },
+      messages: [{ role: "user", content: "Hi" }],
+    }, provider).reasoning_effort;
+    assert.strictEqual(mk(1024), "low");
+    assert.strictEqual(mk(8192), "medium");
+    assert.strictEqual(mk(32000), "high");
+  });
+
+  it("output_config.effort wins over thinking budget", () => {
+    const provider = mockProvider();
+    provider.reasoningEffort = "medium";
+    const result = protocol.anthropicToOpenAIBody({
+      model: "grok-4.5",
+      output_config: { effort: "low" },
+      thinking: { type: "enabled", budget_tokens: 32000 },
+      messages: [{ role: "user", content: "Hi" }],
+    }, provider);
+    assert.strictEqual(result.reasoning_effort, "low");
+  });
+
+  it("THINKING=false forces low effort regardless of client request", () => {
+    const provider = mockProvider();
+    provider.reasoningEffort = "medium";
+    provider.thinkingEnabled = false;
+    const result = protocol.anthropicToOpenAIBody({
+      model: "grok-4.5",
+      output_config: { effort: "xhigh" },
+      messages: [{ role: "user", content: "Hi" }],
+    }, provider);
+    assert.strictEqual(result.reasoning_effort, "low");
+  });
 });
 
 describe("anthropicToOpenAIBody — conversions", () => {

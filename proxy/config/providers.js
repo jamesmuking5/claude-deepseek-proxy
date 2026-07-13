@@ -19,6 +19,10 @@ function parseChoice(raw, label, choices) {
 function buildProviders() {
   const providers = {};
 
+  // Reasoning/thinking is always on unless THINKING=false in .env, which
+  // forces minimal reasoning effort on providers that support the control.
+  const thinkingEnabled = parseBool(getOptional("THINKING", null), "THINKING") ?? true;
+
   const deepseekKey = getOptional("DEEPSEEK_API_KEY", null);
   if (deepseekKey) {
     providers.deepseek = {
@@ -86,6 +90,7 @@ function buildProviders() {
       tokenizePath: "/tokenize-text",
       apiKey: xaiKey,
       reasoningEffort,
+      thinkingEnabled,
       modelMap: {
         "claude-opus-4-9": "grok-4.5",
       },
