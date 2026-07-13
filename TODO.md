@@ -1,5 +1,32 @@
 # TODO
 
+## Client model-ID gotchas (Claude Code gates features by model ID)
+
+Claude clients decide feature availability from the *Claude* model ID in the
+map, not from the real upstream model. When choosing which Claude ID to map a
+provider to, remember:
+
+- **Effort/reasoning slider**: only shown for model IDs Claude Code knows are
+  effort-capable (Fable 5, Opus 4.5+). Mapping to a made-up ID
+  (`claude-opus-4-9`) or older ID silently hides the slider (found 2026-07-13).
+- **Context window budgeting**: the client budgets/compacts against the
+  *claimed* model's context (e.g. Fable 5 = 1M). If the upstream model's real
+  context is smaller (grok-4.5, deepseek), the client will happily build
+  prompts the upstream rejects with a 400 once history grows. No proxy-side
+  guard exists yet — consider clamping/erroring early or documenting per-map
+  safe IDs.
+- **max_tokens**: client picks its default (e.g. 32000) from the claimed
+  model's output limit; must not exceed the upstream's real cap.
+- **Vision/attachments**: client enables image attach if the claimed Claude
+  model has vision; the provider's `capabilities.vision` flag must match the
+  real upstream or requests fail. NOTE: xai config currently has
+  `vision: false` while Grok 4.5 supports vision — verify and flip.
+- **count_tokens accuracy**: local byte/4 estimate (and xAI tokenize) differ
+  from the claimed model's tokenizer, so the client's context meter drifts
+  from upstream reality.
+- **Model self-identification**: the upstream model will claim to be the
+  mapped Claude model in conversation; cosmetic.
+
 ## Planned
 
 - **SQLite-backed config + Web UI** to replace the (possibly outdated)
