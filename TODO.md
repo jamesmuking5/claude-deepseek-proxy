@@ -1,5 +1,13 @@
 # TODO
 
+## Planned
+
+- **SQLite-backed config + Web UI** to replace the (possibly outdated)
+  `setup.sh` / `setup.bat` flow: manage providers, API keys, model maps, and
+  per-provider reasoning-level mapping (incl. allowed effort vocabularies per
+  upstream, e.g. OpenAI `minimal|low|medium|high` vs xAI grok-mini `low|high`)
+  through a GUI instead of hand-edited .env files.
+
 ## Deferred
 
 - **Surface upstream reasoning as thinking blocks (openai-chat streaming)**
