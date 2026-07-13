@@ -436,7 +436,13 @@ function translateError(upstreamStatus, upstreamBody) {
   let upstreamMsg = `Upstream error ${upstreamStatus}`;
   try {
     const parsed = JSON.parse(upstreamBody);
-    if (parsed.error?.message) upstreamMsg = parsed.error.message;
+    if (typeof parsed.error === "string" && parsed.error) {
+      upstreamMsg = parsed.error;
+    } else if (parsed.error?.message) {
+      upstreamMsg = parsed.error.message;
+    } else if (typeof parsed.message === "string" && parsed.message) {
+      upstreamMsg = parsed.message;
+    }
   } catch {}
 
   return {
